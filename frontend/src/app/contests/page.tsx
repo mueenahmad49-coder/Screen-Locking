@@ -81,6 +81,29 @@ export default function ContestsPage() {
     }
   }
 
+  // Screen Locking Phase 1: Separate Quiz Popup
+  function openQuizWindow(contestId: number) {
+    setError("");
+
+    const width = window.screen.availWidth;
+    const height = window.screen.availHeight;
+
+    const quizWindow = window.open(
+      `/contests/${contestId}/quiz`,
+      `secureQuiz_${contestId}`,
+      `popup=yes,width=${width},height=${height},left=0,top=0,resizable=yes,scrollbars=yes`
+    );
+
+    if (!quizWindow) {
+      setError(
+        "Popup blocked. Please allow popups and try again."
+      );
+      return;
+    }
+
+    quizWindow.focus();
+  }
+
   function isRegistered(contestId: number) {
     return registrations.some(
       (registration) => registration.contest === contestId
@@ -203,9 +226,7 @@ export default function ContestsPage() {
 
                         <button
                           type="button"
-                          onClick={() =>
-                            router.push(`/contests/${contest.id}/quiz`)
-                          }
+                          onClick={() => openQuizWindow(contest.id)}
                           className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700"
                         >
                           Attempt Quiz
