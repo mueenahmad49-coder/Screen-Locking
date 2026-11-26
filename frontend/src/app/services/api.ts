@@ -2,6 +2,7 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 let csrfToken: string | null = null;
+let refreshPromise: Promise<boolean> | null = null;
 
 export async function initializeCsrf(): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/auth/csrf/`, {
@@ -17,11 +18,66 @@ export async function initializeCsrf(): Promise<void> {
   csrfToken = data.csrfToken;
 }
 
+async function refreshToken(): Promise<boolean> {
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  const performRefresh = async (): Promise<boolean> => {
+    try {
+      await initializeCsrf();
+
+      const response = await fetch(
+        `${API_BASE_URL}/auth/refresh/`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": csrfToken!,
+          },
+        }
+      );
+
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const task = async (): Promise<boolean> => {
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        navigator.locks
+      ) {
+        return await navigator.locks.request(
+          "jwt-token-refresh",
+          performRefresh
+        );
+      }
+
+      return await performRefresh();
+    } catch {
+      return false;
+    }
+  };
+
+  const promise = task().finally(() => {
+    refreshPromise = null;
+  });
+
+  refreshPromise = promise;
+
+  return promise;
+}
+
 type ApiOptions = RequestInit;
 
 export async function apiRequest<T>(
   endpoint: string,
-  options: ApiOptions = {}
+  options: ApiOptions = {},
+  retry = true
 ): Promise<T> {
   if (!API_BASE_URL) {
     throw new Error("API URL is not configured.");
@@ -49,32 +105,53 @@ export async function apiRequest<T>(
     credentials: "include",
   });
 
+  const excludedEndpoints = [
+    "/auth/login/",
+    "/auth/register/",
+    "/auth/refresh/",
+    "/auth/csrf/",
+  ];
+
+  if (
+    response.status === 401 &&
+    retry &&
+    !excludedEndpoints.includes(endpoint)
+  ) {
+    const refreshed = await refreshToken();
+
+    if (refreshed) {
+      return apiRequest<T>(endpoint, options, false);
+    }
+  }
+
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
     let message = "Something went wrong.";
 
-if (typeof data === "string") {
-  message = data;
-} else if (data && typeof data === "object") {
-  const errors = Object.entries(data as Record<string, unknown>);
+    if (typeof data === "string") {
+      message = data;
+    } else if (data && typeof data === "object") {
+      const errors = Object.entries(
+        data as Record<string, unknown>
+      );
 
-  if (errors.length > 0) {
-    const [field, value] = errors[0];
+      if (errors.length > 0) {
+        const [field, value] = errors[0];
 
-    if (typeof value === "string") {
-      message = value;
-    } else if (Array.isArray(value)) {
-      message = `${field}: ${value.join(", ")}`;
-    } else if (field === "detail" || field === "message") {
-      message = String(value);
-    } else {
-      message = `${field}: ${JSON.stringify(value)}`;
+        if (typeof value === "string") {
+          message = value;
+        } else if (Array.isArray(value)) {
+          message = `${field}: ${value.join(", ")}`;
+        } else if (field === "detail" || field === "message") {
+          message = String(value);
+        } else {
+          message = `${field}: ${JSON.stringify(value)}`;
+        }
+      }
     }
-  }
-}
 
-throw new Error(message);
+    throw new Error(message);
   }
 
   return data as T;
