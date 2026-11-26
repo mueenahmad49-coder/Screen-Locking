@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -25,6 +25,7 @@ export default function ContestsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const quizWindows = useRef<Record<number, Window>>({});
   const isAdmin = user?.role === "ADMIN";
 
   const loadContests = useCallback(async () => {
@@ -82,27 +83,53 @@ export default function ContestsPage() {
   }
 
   // Screen Locking Phase 1: Separate Quiz Popup
-  function openQuizWindow(contestId: number) {
-    setError("");
+  
+function openQuizWindow(contestId: number) {
+  setError("");
+  setSuccess("");
 
-    const width = window.screen.availWidth;
-    const height = window.screen.availHeight;
+  const existingWindow = quizWindows.current[contestId];
 
-    const quizWindow = window.open(
-      `/contests/${contestId}/quiz`,
-      `secureQuiz_${contestId}`,
-      `popup=yes,width=${width},height=${height},left=0,top=0,resizable=yes,scrollbars=yes`
+  if (existingWindow && !existingWindow.closed) {
+    setSuccess(
+      "Quiz is already open. Returning to your active quiz window."
     );
 
-    if (!quizWindow) {
-      setError(
-        "Popup blocked. Please allow popups and try again."
-      );
-      return;
-    }
-
-    quizWindow.focus();
+    existingWindow.focus();
+    return;
   }
+
+  const width = window.screen.availWidth;
+  const height = window.screen.availHeight;
+
+  const quizWindow = window.open(
+    "",
+    `secureQuiz_${contestId}`,
+    `popup=yes,width=${width},height=${height},left=0,top=0,resizable=yes,scrollbars=yes`
+  );
+
+  if (!quizWindow) {
+    setError(
+      "Popup blocked. Please allow popups and try again."
+    );
+    return;
+  }
+
+  quizWindows.current[contestId] = quizWindow;
+
+  if (quizWindow.location.href === "about:blank") {
+    quizWindow.location.replace(
+      `/contests/${contestId}/quiz`
+    );
+  } else {
+    setSuccess(
+      "Quiz is already open. Returning to your active quiz window."
+    );
+  }
+
+  quizWindow.focus();
+}
+
 
   function isRegistered(contestId: number) {
     return registrations.some(

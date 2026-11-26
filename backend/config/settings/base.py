@@ -134,10 +134,16 @@ REST_FRAMEWORK = {
 }
 
 # CORS
+from corsheaders.defaults import default_headers
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ]
 
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-quiz-session",
+)
 # Frontend/backend cookie security for local development
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False

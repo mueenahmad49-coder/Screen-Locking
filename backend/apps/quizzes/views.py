@@ -1,4 +1,6 @@
 
+from datetime import timedelta
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import IntegrityError, transaction
@@ -14,7 +16,13 @@ from apps.contests.permissions import IsAdminRole
 from apps.registrations.models import Registration
 from apps.registrations.permissions import IsParticipant
 
-from .models import QuizQuestion, QuizSubmission
+from .models import QuizQuestion, QuizSubmission, QuizSession
+
+from .session_views import (
+    validate_quiz_session,
+    SESSION_TIMEOUT,
+)
+
 from .serializers import (
     QuizQuestionSerializer,
     ParticipantQuizQuestionSerializer,
@@ -105,7 +113,9 @@ class ParticipantQuizQuestionListView(generics.ListAPIView):
         now = timezone.now()
 
         if not (contest.start_time <= now < contest.end_time):
-            raise NotFound("This contest is not currently ongoing.")
+            raise NotFound(
+                "This contest is not currently ongoing."
+            )
 
         is_registered = Registration.objects.filter(
             contest=contest,
@@ -116,6 +126,20 @@ class ParticipantQuizQuestionListView(generics.ListAPIView):
             raise PermissionDenied(
                 "You are not registered for this contest."
             )
+
+        if QuizSubmission.objects.filter(
+            contest=contest,
+            participant=self.request.user,
+        ).exists():
+            raise PermissionDenied(
+                "You have already submitted this quiz."
+            )
+
+        # Screen Locking: Validate active quiz session.
+        validate_quiz_session(
+            self.request,
+            contest.pk
+        )
 
         return QuizQuestion.objects.filter(
             contest=contest
@@ -162,6 +186,12 @@ class ParticipantQuizSubmissionCreateView(APIView):
                 "You have already submitted this quiz."
             )
 
+        # Screen Locking: Validate session before submission.
+        session = validate_quiz_session(
+            request,
+            contest_id
+        )
+
         serializer = QuizSubmissionCreateSerializer(
             data=request.data,
             context={
@@ -174,17 +204,45 @@ class ParticipantQuizSubmissionCreateView(APIView):
 
         try:
             with transaction.atomic():
+
+                now = timezone.now()
+
+                cutoff = now - timedelta(
+                    seconds=SESSION_TIMEOUT
+                )
+
+                # Revalidate and close the active session.
+                updated = QuizSession.objects.filter(
+                    pk=session.pk,
+                    participant=request.user,
+                    is_active=True,
+                    last_heartbeat__gt=cutoff,
+                    contest__start_time__lte=now,
+                    contest__end_time__gt=now,
+                    contest__status=Contest.Status.PUBLISHED,
+                ).update(
+                    is_active=False,
+                    ended_at=now,
+                )
+
+                if not updated:
+                    raise PermissionDenied(
+                        "Quiz session is invalid or expired."
+                    )
+
                 submission = serializer.save()
 
         except IntegrityError:
             return Response(
                 {
-                    "message": "You have already submitted this quiz."
+                    "message": "Unable to save quiz submission."
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        result_serializer = QuizSubmissionResultSerializer(submission)
+        result_serializer = QuizSubmissionResultSerializer(
+            submission
+        )
 
         return Response(
             {
@@ -231,7 +289,7 @@ class ParticipantQuizAnswerResultView(generics.ListAPIView):
             participant=self.request.user,
         )
 
-        return submission.answers.select_related( #type:ignore
+        return submission.answers.select_related(  # type:ignore
             "question",
             "selected_option"
         )
@@ -256,6 +314,8 @@ class AdminQuizSubmissionListView(generics.ListAPIView):
         contest_id = self.request.query_params.get("contest")  # type:ignore
 
         if contest_id:
-            queryset = queryset.filter(contest_id=contest_id)
+            queryset = queryset.filter(
+                contest_id=contest_id
+            )
 
         return queryset

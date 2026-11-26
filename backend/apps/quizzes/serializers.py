@@ -282,3 +282,7 @@ class QuizAnswerResultSerializer(serializers.ModelSerializer):
             "is_correct",
             "marks",
         ]
+
+class QuizSessionTokenSerializer(serializers.Serializer):
+
+    session_token = serializers.UUIDField()

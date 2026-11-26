@@ -1,7 +1,10 @@
 
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from apps.contests.models import Contest
 
@@ -125,15 +128,63 @@ class QuizAnswer(models.Model):
 
     def clean(self):
 
-        if self.question.contest_id != self.submission.contest_id: #type:ignore
+        if self.question.contest_id != self.submission.contest_id:
             raise ValidationError(
                 "Question does not belong to this contest."
             )
 
-        if self.selected_option.question_id != self.question_id: #type:ignore
+        if self.selected_option.question_id != self.question_id:
             raise ValidationError(
                 "Selected option does not belong to this question."
             )
 
     def __str__(self):
         return f"Answer to Question {self.question.order}"
+
+
+class QuizSession(models.Model):
+
+    contest = models.ForeignKey(
+        Contest,
+        on_delete=models.CASCADE,
+        related_name="quiz_sessions"
+    )
+
+    participant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="quiz_sessions"
+    )
+
+    session_token = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    started_at = models.DateTimeField(auto_now_add=True)
+
+    last_heartbeat = models.DateTimeField(
+        default=timezone.now
+    )
+
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        ordering = ["-started_at"]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["contest", "participant"],
+                condition=models.Q(is_active=True),
+                name="unique_active_quiz_session"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.participant.email} - {self.contest.title}"
